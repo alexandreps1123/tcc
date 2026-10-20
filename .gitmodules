@@ -1,0 +1,12 @@
+[submodule "dogefuzz"]
+	path = dogefuzz
+	url = https://github.com/alexandreps1123/dogefuzz.git
+[submodule "dogefuzz-benchmark"]
+	path = dogefuzz-benchmark
+	url = https://github.com/alexandreps1123/dogefuzz-benchmark.git
+[submodule "dogefuzz-enhanced-go-ethereum"]
+	path = dogefuzz-enhanced-go-ethereum
+	url = https://github.com/alexandreps1123/dogefuzz-enhanced-go-ethereum.git
+[submodule "dogefuzz-vandal-api"]
+	path = dogefuzz-vandal-api
+	url = https://github.com/alexandreps1123/dogefuzz-vandal-api.git
