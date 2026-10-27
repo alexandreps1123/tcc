@@ -1,6 +1,6 @@
 # Acompanhamento — bancos locais e acervo compartilhado
 
-Criado em: 2026-10-06. Última revisão: 2026-10-10.
+Criado em: 2026-10-06. Última revisão: 2026-10-20.
 
 Arquitetura vigente: persistência operacional local e banco adicional de seeds.
 Revisão documental autorizada pelo usuário. A preparação S02/S03 já possui entrega
@@ -20,8 +20,8 @@ testes e próximo passo. Definição documental não equivale a código implemen
 
 | Campo | Situação |
 | --- | --- |
-| Situação | S01 concluída documentalmente; S02 parcialmente implementada e S03 implementada no escopo delegado, ambas com revisão pendente; S04–S16 pendentes |
-| Próximo passo | Revisar entrega S02/S03 e definir fechamento da conexão, migração/acesso e esquema para S04/S05 |
+| Situação | S01 concluída documentalmente; S02 parcialmente implementada e S03 implementada no escopo delegado, ambas com revisão pendente; S04 pronta para implementação; S05–S16 pendentes |
+| Próximo passo | Preparar execução de S04, revisar entrega S02/S03 e definir esquema/migração de S05 |
 | Tarefas concluídas | 1 de 16 — S01, entrega documental |
 | Pontos concluídos | 5 de 101 — S01, entrega documental |
 | Estimativa | 98–176 horas; contingência de 20%: 118–212 horas |
@@ -62,6 +62,12 @@ que alterasse branches ou commits nesta revisão. Banco e cooperação entre con
 permanecem nas tarefas posteriores; main continua intacta até os testes necessários.
 
 ### Checkpoints de preparação
+
+Ambiente local preparado em 2026-10-20: [guia de execução/debug e chamada de teste](docs/tarefas/2026-10-20-ambiente-local/README.md)
+e [evidências](docs/tarefas/2026-10-20-ambiente-local/RELATORIO.md).
+Testes S02/S03 passaram novamente; SimpleDAO/greybox/60s concluiu com relatório,
+cobertura e hits. PostgreSQL 17 está disponível para desenvolvimento, ainda sem
+integração ao código. Esta atividade não conclui S04, S11 ou os testes de reuso.
 
 - [ ] Confirmar referências de código e regras locais dos repositórios antes de implementar.
 - [ ] Recuperar configuração, comandos e relatórios do experimento anterior.
@@ -124,7 +130,9 @@ Estado: Parcialmente definida. Relacionada: S04, S05, S09, S11, S14, S15.
 - [ ] Definir acesso de projetos Docker independentes e volume persistente do acervo.
 - [x] Definir tratamento de operação: erro de consulta segue propagação atual; falha de publicação é aceita.
 - [x] Na inicialização shared, fazer uma única tentativa de verificar a conexão ao acervo, limitada por timeout; em falha, registrar o erro e encerrar a inicialização com erro, sem retentativa ou fallback (2026-10-10).
-- [ ] Documentar fechamento das conexões e preservação do acervo.
+- [x] Definir fechamento: responsável único, bloqueio de novas operações e cancelamento imediato das iniciadas, preservando acervo e SQLite local (2026-10-20).
+
+Decisão de 2026-10-20: cancelamento imediato no encerramento. Um único componente é responsável pelo pool do acervo. Ao iniciar o encerramento, impedir novas operações, solicitar o cancelamento das consultas/publicações em andamento e fechar o pool, sem aguardar seus timeouts como política de conclusão. Não adicionar prazo de drenagem, fila ou retentativa de encerramento. Preservar os dados do PostgreSQL e o ciclo de vida atual do SQLite local. Cancelamento é uma solicitação ao driver, não garantia de retorno instantâneo nem de rollback: uma publicação pode já ter sido gravada. Aplicar a política existente de falha aceita, sem reenviar ao Geth ou garantir publicação posterior.
 
 O timeout de inicialização limita a tentativa inteira de conexão, autenticação e
 verificação de acesso, sem incluir migrações. Em erro anterior ao prazo, encerrar
@@ -147,7 +155,11 @@ Estado: Em andamento documental. Relacionada: S01, S05, S06, S09, S14.
 - [x] Substituir esquema operacional unificado por acervo separado de seeds.
 - [x] Não adicionar instance_id às quatro entidades locais para isolamento central.
 - [x] Exigir confirmação antes de criar qualquer nova tabela.
-- [ ] Confirmar esquema mínimo, nomes/tabelas e campos necessários à seleção, sem referência de origem.
+- [x] Aprovar uma única tabela de seeds para o acervo, com identidade, inputs, métricas, ID e horário de escrita no mesmo registro (2026-10-20).
+- [x] Aprovar `seed_candidates` como nome da tabela única do acervo (2026-10-20).
+- [x] Aprovar NOT NULL em todos os campos; ID e horário gerados pelo banco, sem defaults para métricas ou identidade (2026-10-20).
+- [x] Aprovar nomes/tipos dos dez campos conforme tabela de D03, incluindo métricas NUMERIC(20,0) para uint64 (2026-10-20).
+- [ ] Aprovar validações de conteúdo, incluindo CHECK de faixa das métricas, sem referência de origem.
 - [x] Definir repetidas: registrar cada publicação separadamente, sem deduplicação, substituição de métricas ou idempotência exigida inicialmente.
 - [x] Definir momento/frequência: a cada transação concluída e compatível, após análise e commit local confirmado, sem esperar lote ou fim da tarefa.
 - [x] Escolher publicação síncrona inicialmente; manter assíncrona como possibilidade futura.
@@ -161,10 +173,49 @@ Estado: Em andamento documental. Relacionada: S01, S05, S06, S09, S14.
 - [x] Definir commit remoto ambíguo: não reenviar ao Geth; nova tentativa pode inserir repetida, aceita.
 - [ ] Detalhar critérios/intervalo se tentativas configuradas forem maiores que 1.
 
-Proposta mínima: registro de seed com chave estável da função, inputs com separador `;`,
-ID próprio por registro e metadados aprovados de seleção, sem unicidade por inputs. Uma tabela
-é uma hipótese de desenho, ainda não aprovada; corpora, observations e outbox
-não são automaticamente necessárias. A opção futura de origem não implica FK para banco remoto.
+Decisão de 2026-10-20: usar uma única tabela de seeds no acervo. Cada publicação
+armazena a identidade compartilhada da função, inputs com separador `;`, métricas
+do SeedCandidate, ID sequencial próprio e horário de escrita. Preservar publicações
+repetidas como registros independentes, sem unicidade por inputs. A identidade se
+repete entre registros; não criar tabelas separadas de contratos, funções, corpora,
+observations ou outbox nesta entrega. Isso reduz relacionamentos e operações de
+cadastro coordenadas entre instâncias, ao custo de repetir os dados de identidade.
+Nome aprovado em 2026-10-20: `seed_candidates`. Todos os campos serão NOT NULL;
+ID e horário de escrita são gerados pelo banco, sem defaults para métricas ou
+identidade. Zero e texto vazio não são NULL; preservar zeros legítimos e a
+representação atual das listas, sem fabricar métricas ausentes. NOT NULL não
+valida identidade vazia nem detecta campos Go deixados em zero; os produtores
+devem publicar somente após análise e gravações locais bem-sucedidas. Em violação
+da restrição, a publicação falha conforme política já aprovada, preservando o
+resultado local. Validações de conteúdo, índices e migração continuam pendentes. Tabelas
+adicionais, inclusive de controle de migração caso necessárias, exigem confirmação
+própria. A opção futura de origem não implica FK para banco remoto.
+
+Tipos e nomes dos campos aprovados em 2026-10-20 para `seed_candidates`.
+Todos os campos são NOT NULL; somente ID e horário são gerados pelo banco.
+
+| Campo | Tipo PostgreSQL | Conteúdo |
+| --- | --- | --- |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` | Chave primária sequencial do registro |
+| `source_hash` | `TEXT` | SHA-256 hexadecimal da fonte exata |
+| `contract_name` | `TEXT` | Declaração do contrato selecionada |
+| `function_signature` | `TEXT` | Assinatura ABI canônica completa |
+| `inputs` | `TEXT` | Argumentos na representação atual com `;` |
+| `executed_instructions` | `TEXT` | Instruções executadas na representação atual com `;` |
+| `delta_coverage` | `NUMERIC(20,0)` | Métrica uint64 de cobertura do produtor |
+| `delta_min_distance` | `NUMERIC(20,0)` | Métrica uint64 de distância do produtor |
+| `critical_instructions_hits` | `NUMERIC(20,0)` | Métrica uint64 de ocorrências críticas do produtor |
+| `written_at` | `TIMESTAMPTZ` | Horário atribuído pelo PostgreSQL na inserção |
+
+Validação técnica: MaxUint32 (4.294.967.295) cabe em BIGINT e NUMERIC(20,0),
+mas não limita todas as métricas. ComputeDeltaMinDistance retornou 8.589.934.590
+com dois alvos inalcançáveis e MaxUint64 (18.446.744.073.709.551.615) com instruções
+vazias em chamada controlada. SELECT no PostgreSQL confirmou a representação
+exata desses valores em NUMERIC(20,0). Não reduzir a faixa nem converter por
+float64 na persistência; testar o round-trip pelo driver na implementação.
+A restrição CHECK de faixa 0..MaxUint64 e demais validações de conteúdo ainda
+precisam ser aprovadas. A aprovação dos tipos não cria tabelas ou migrações.
+Referência técnica: [tipos numéricos do PostgreSQL 17](https://www.postgresql.org/docs/17/datatype-numeric.html).
 
 Decisão do usuário: origem da seed fica como opção futura e não será utilizada
 na implementação inicial. Não incluir no candidato/esquema ativo os IDs de tarefa,
@@ -174,7 +225,7 @@ exige nova decisão. Métricas atuais podem indicar uso do acervo como fonte, se
 identificar produtor ou afirmar que todo candidato do acervo veio de outra instância.
 Metadados de pontuação estão definidos conforme D04/D05, sem identificar origem
 ou representar ganho do consumidor. Horário de inserção e ID sequencial estão
-definidos para ordenação; nomes/tipos SQL, índices e retenção ainda precisam de aprovação.
+definidos para ordenação; nomes/tipos SQL aprovados. Índices e retenção ainda precisam de aprovação.
 
 **Decisão de 2026-10-09: publicação simples, sem outbox; falha aceita pelo usuário.**
 Após salvar o resultado local, tentar publicar com tempo de espera limitado. Se
@@ -375,7 +426,7 @@ Estado: Parcialmente definida. Relacionada: S02, S03, S06–S08, S13.
 - [x] Definir recência dos modos dirigidos pelo momento da escrita no acervo, atribuído pelo PostgreSQL na inserção (2026-10-10).
 - [x] Desempatar horários iguais dos modos dirigidos por ID numérico sequencial do registro, em ordem decrescente (2026-10-10).
 - [x] Unificar desempate do greybox com os modos dirigidos: horário de escrita DESC, ID sequencial DESC após DeltaCoverage ASC (2026-10-10).
-- [ ] Aprovar nomes/tipos dos campos de armazenamento no esquema.
+- [x] Aprovar nomes/tipos dos campos de armazenamento conforme D03 (2026-10-20).
 - [x] Definir timeout total de recuperação configurável de 500ms; aplicar antes da seleção, conforme D02.
 - [x] Retirar preferência por métricas locais: não há consulta local de candidatos no comportamento compartilhado.
 - [x] Aceitar registros de entradas repetidas no acervo e na seleção, cada um com suas métricas; histórico local permanece atual.
@@ -413,8 +464,7 @@ publicação aceita cria um registro com seus inputs/métricas; não substituir 
 por última ou melhor, não combinar campos nem deduplicar na seleção. Registros
 iguais podem ocupar várias posições, como ocorre atualmente no histórico local.
 Não exigir idempotência; uma repetição após timeout com commit remoto pode criar
-outra linha. Medir crescimento e efeito no conjunto de candidatos. Representação dos inputs, limites e desempates estão definidos; nomes/tipos dos
-campos de armazenamento continuam pendentes de aprovação do esquema. Consulta remota ainda não implementada; objeto/adapter já entregues no escopo delegado.
+outra linha. Medir crescimento e efeito no conjunto de candidatos. Representação dos inputs, limites, desempates e nomes/tipos dos campos de armazenamento estão definidos; validações, índices e migração continuam pendentes. Consulta remota ainda não implementada; objeto/adapter já entregues no escopo delegado.
 
 
 Decisão vigente de D05/S07 (2026-10-10): filtrar pela identidade compartilhada
@@ -428,7 +478,7 @@ Decisão vigente de D05/S07 (2026-10-10): filtrar pela identidade compartilhada
 
 O horário é atribuído pelo PostgreSQL na inserção, não pelo produtor. ID numérico
 sequencial e horário pertencem ao registro persistido, sem integrar SeedCandidate.
-Os nomes e tipos SQL precisam ser aprovados no esquema. Publicações repetidas
+Os campos `written_at` (TIMESTAMPTZ) e `id` (BIGINT identity) estão aprovados no esquema. Publicações repetidas
 recebem novos registros/horários. Horário e ID não garantem ordem de commit.
 
 A consulta greybox mantém o critério primário crescente atual, mas substitui a
@@ -457,7 +507,7 @@ Estado: Parcialmente definida. Relacionada: S04, S09, S11–S14.
 - [x] Inicialização shared falha imediatamente em erro de conexão, conforme D02.
 - [x] Definir timeout de inicialização configurável de 5s, conforme D02.
 - [x] Definir timeout de consulta configurável de 500ms, conforme D02/D05.
-- [ ] Definir encerramento com publicação em curso.
+- [x] Definir encerramento com publicação em curso: cancelar imediatamente, aceitando publicação perdida ou commit remoto já realizado, sem drenagem/retentativa (2026-10-20).
 - [ ] Verificar receptor/relatório próprios e destinos de arquivos concorrentes.
 - [ ] Documentar efeito real de reinício e perda possível do histórico local.
 
@@ -496,14 +546,14 @@ Investigação adiada; não autoriza alterar o algoritmo no escopo do compartilh
 
 A ordem abaixo é válida para execução. Predecessoras permitem antecipar caminhos
 independentes. S01 está concluída como entrega documental. S02/S03 têm entrega
-no escopo delegado, com S02 parcial e revisão pendente; S04–S16 permanecem pendentes.
+no escopo delegado, com S02 parcial e revisão pendente; S04 está pronta para implementação e S05–S16 permanecem pendentes.
 
 | ID | Tarefa | Pontos | Horas | Predecessoras | Definições | Status |
 | --- | --- | ---: | --- | --- | --- | --- |
 | S01 | Contrato mínimo e fluxo | 5 | 4–8 | — | D01, D03 | Concluída documentalmente |
 | S02 | Formato e compatibilidade dos inputs | 8 | 8–14 | S01 | D04, D05 | Parcialmente implementada — revisão pendente |
 | S03 | Identidade estável da função | 5 | 4–8 | S01 | D05 | Implementada no escopo delegado — revisão pendente |
-| S04 | Conexão exclusiva do acervo | 5 | 6–10 | S01 | D02 | Pendente |
+| S04 | Conexão exclusiva do acervo | 5 | 6–10 | S01 | D02 | Pronta para implementação |
 | S05 | Esquema e migração do acervo | 8 | 8–14 | S02, S03, S04 | D02, D03 | Pendente |
 | S06 | Publicação de entradas concluídas | 8 | 8–14 | S05 | D03, D05 | Pendente |
 | S07 | Consulta de candidatos do acervo | 8 | 8–14 | S05 | D05, D08 | Pendente |
@@ -519,7 +569,9 @@ no escopo delegado, com S02 parcial e revisão pendente; S04–S16 permanecem pe
 
 As definições precisam estar suficientemente fechadas para a entrega dependente.
 S01 concluiu contrato e política de publicação como entrega documental; não
-dependeu de implementar o banco. D03/D04/D05 continuam parciais para tarefas seguintes. Não iniciar S05 sem confirmar novas tabelas e desenho de D03.
+dependeu de implementar o banco. D03/D04/D05 continuam parciais para tarefas seguintes.
+A tabela única e seus campos/tipos estão aprovados; não iniciar S05 sem fechar
+validações, índices e migração, além de atender suas predecessoras.
 
 ## 5. Checkpoints por tarefa
 
@@ -584,24 +636,36 @@ hash não comprova cooperação entre containers, reservada a S13/S14.
 
 ### S04 — Conexão exclusiva do acervo
 
-Status: Pendente.
+Status: Pronta para implementação.
 Responsável: — | Início: — | Término: — | Horas reais: —.
 
 - [ ] Configurar conexão própria do acervo, independente de SQLite e obrigatória também na execução local.
-- [ ] Verificar que execução local exige DSN/PostgreSQL e consulta/publica no acervo, sem seletor local/shared.
+- [ ] Verificar que execução local exige DSN/PostgreSQL e valida acesso na inicialização, sem seletor local/shared; consulta/publicação reais pertencem a S06/S07.
 - [ ] Implementar startupTimeout configurável de 5s para verificar conexão na inicialização com uma tentativa e encerramento em falha, conforme D02.
 - [ ] Implementar pool configurável 2/2, validar os parâmetros e reutilizar o pool da instância.
 - [ ] Implementar queryTimeout configurável de 500ms e validar o prazo total da operação.
-- [ ] Verificar fechamento sem apagar acervo ou comprometer conexão local.
+- [ ] Implementar responsável único pelo pool; bloquear novas operações e solicitar cancelamento imediato das iniciadas antes de fechar, sem drenagem ou retentativa.
+- [ ] Verificar cancelamento, recusa de novas operações e fechamento sem apagar acervo ou comprometer conexão local; liberar o pool também em falha posterior da inicialização.
 
-Evidência / bloqueio / próximo passo: —
+Escopo liberado em 2026-10-20: configuração, conexão, pool, timeouts e encerramento.
+S01 atende a predecessora; revisão S02/S03 pode ocorrer em paralelo. Esquema e
+migração ficam em S05; infraestrutura definitiva em S11. Validar a conexão com
+PostgreSQL 17 sem criar tabelas. Não incluir consultas/publicações reais nesta entrega.
+A política será exercitada com operações controladas em S04 e com os fluxos reais
+em S06/S07/S14. A prontidão não inicia a implementação nem soma pontos concluídos.
+
+Evidência / bloqueio / próximo passo: decisão de encerramento registrada em D02/D06; preparar escopo fechado da execução e registrar responsável, branch e evidências antes das alterações.
 
 ### S05 — Esquema e migração do acervo
 
 Status: Pendente.
 Responsável: — | Início: — | Término: — | Horas reais: —.
 
-- [ ] Obter confirmação prévia do esquema e de cada nova tabela necessária.
+- [x] Aprovar estrutura com uma única tabela de seeds, sem tabelas próprias de contratos/funções (2026-10-20).
+- [x] Aprovar nome da tabela: `seed_candidates` (2026-10-20).
+- [x] Aprovar obrigatoriedade: NOT NULL em todos os campos, ID/horário gerados pelo banco e métricas/identidade sem defaults (2026-10-20).
+- [x] Aprovar nomes/tipos dos dez campos de seed_candidates, conforme tabela de D03 (2026-10-20).
+- [ ] Aprovar validações de conteúdo e índices; confirmar separadamente eventual tabela de controle de migração.
 - [ ] Implementar ID único por registro, índices e migração do acervo, sem unicidade por inputs e sem migrar entidades locais.
 - [ ] Verificar migração reaplicável e publicações concorrentes iguais criando registros independentes.
 
@@ -703,7 +767,7 @@ Status: Pendente.
 Responsável: — | Início: — | Término: — | Horas reais: —.
 
 - [ ] Exercitar indisponibilidade, timeout e publicações duplicadas concorrentes.
-- [ ] Exercitar encerramento e resposta perdida após commit, respeitando garantia aprovada de publicação.
+- [ ] Exercitar encerramento com cancelamento imediato e resposta perdida após commit, respeitando falha aceita e sem garantia de rollback remoto.
 - [ ] Registrar latência/carga, propagação de erro na consulta e preservação local em falha de publicação; repetidas aceitas, sem reenvio ao Geth.
 
 Evidência / bloqueio / próximo passo: —
@@ -792,6 +856,11 @@ as seções D01–D08 e o quadro de tarefas descrevem a situação vigente.
 | 2026-10-10 | D06 / S04 / S12 / S16 | Usuário definiu somente shared, exigindo PostgreSQL também na execução local | Substitui modo local sem acesso ao acervo; sem parâmetro de modo. DSN e verificação na inicialização obrigatórias; SQLite operacional local preservado. Comparativo com referência histórica requer protocolo próprio; nenhuma alteração de código nesta revisão |
 | 2026-10-10 | D06 / S16 / Delegação | Usuário definiu separação por branch e main intacta até os testes necessários | Desenvolver/testar em branch própria; main é referência anterior, sem alteração ou merge nessa etapa. Detalhar testes/protocolo e registrar commits; referências congeladas preservadas, nenhuma operação Git realizada nesta revisão |
 | 2026-10-10 | Revisão consolidada | Consolidado estado vigente após decisões e entrega delegada S02/S03 | PostgreSQL obrigatório, configuração/consultas/desempates e branches consolidados; S02 parcial e S03 implementada no escopo delegado com revisão pendente, sem aumentar pontos concluídos. Manifestos conferidos; testes não repetidos nesta revisão |
+| 2026-10-20 | D02 / D06 / S04 / S14 | Usuário escolheu cancelamento imediato no encerramento | Responsável único pelo pool, recusa de novas operações e cancelamento das iniciadas antes de fechar, sem apagar dados ou garantir rollback. Substitui aguardar os timeouts. S04 pronta para implementação, 5 pontos/6–10 horas mantidos; implementação não iniciada e pontos concluídos inalterados |
+| 2026-10-20 | D03 / S05 | Usuário aprovou uma única tabela de seeds | Identidade, inputs, métricas, ID sequencial e horário de escrita no mesmo registro; sem tabelas próprias de contratos/funções. Menos relacionamentos e cadastros coordenados, com repetição da identidade. Nome, campos/tipos, índices e migração pendentes; S05 permanece pendente, 8 pontos/8–14 horas mantidos; nenhuma tabela criada |
+| 2026-10-20 | D03 / S05 | Usuário aprovou o nome `seed_candidates` | Nome alinhado ao objeto SeedCandidate; campos/tipos, obrigatoriedade, índices e migração pendentes. S05 permanece pendente; nenhuma tabela criada |
+| 2026-10-20 | D03 / S05 | Usuário aprovou NOT NULL em todos os campos | ID/horário gerados pelo banco; métricas e identidade sem defaults. Zero e texto vazio não são NULL; validar conteúdo e não fabricar métricas. Violação segue falha aceita de publicação; nomes/tipos SQL, índices e migração pendentes. S05 continua pendente; nenhuma tabela criada |
+| 2026-10-20 | D03 / D05 / S05 | Usuário aprovou os tipos SQL propostos | Dez campos registrados, com TEXT, BIGINT identity, TIMESTAMPTZ e NUMERIC(20,0) para métricas uint64. Validação confirmou valores acima de MaxUint32; CHECK de faixa, demais validações, índices e migração pendentes. S05 continua pendente; estimativa mantida e nenhuma tabela criada |
 
 ## 8. Controle de escopo
 
@@ -800,8 +869,9 @@ auxiliares, revisão global de jobs/callbacks, retomada, RLS ou histórico opera
 central. Integração pontual pode alterar seleção e ponto de publicação, mas deve
 preservar comportamento operacional atual.
 
-Outbox, entrega garantida, novas tabelas, observações múltiplas e rastreabilidade
-detalhada precisam de decisão própria. Toda nova tabela exige confirmação prévia.
+Uma única tabela de seeds está aprovada, com desenho SQL ainda pendente.
+Outbox, entrega garantida, tabelas adicionais, observações múltiplas e rastreabilidade
+detalhada precisam de decisão própria. Toda tabela adicional exige confirmação prévia.
 Reset continua pendente; nenhuma limpeza feita. Importação, replay, remapeamento,
 coordenador, coletor global, relatório conjunto e campanha científica fora do escopo.
 

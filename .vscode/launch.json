@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dogefuzz: debug local",
+      "type": "go",
+      "request": "launch",
+      "mode": "debug",
+      "program": "${workspaceFolder}/dogefuzz/cmd/dogefuzz",
+      "cwd": "${workspaceFolder}/dogefuzz/.local/runtime",
+      "env": {"GOCACHE": "${workspaceFolder}/dogefuzz/.local/go-cache"},
+      "preLaunchTask": "Dogefuzz: preparar configuração local",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Dogefuzz: debug testes de seeds",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/dogefuzz/fuzz",
+      "cwd": "${workspaceFolder}/dogefuzz/fuzz",
+      "env": {"GOCACHE": "${workspaceFolder}/dogefuzz/.local/go-cache"},
+      "args": ["-test.run", "Test(Candidate|Supported|RequestSeeds|ThreeGreybox)", "-test.v"],
+      "preLaunchTask": "Dogefuzz: preparar configuração local"
+    }
+  ]
+}

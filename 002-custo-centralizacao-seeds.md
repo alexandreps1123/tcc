@@ -1,6 +1,6 @@
 # Custo e tarefas — bancos locais e acervo compartilhado
 
-Criado em: 2026-10-06. Revisado em: 2026-10-10.
+Criado em: 2026-10-06. Revisado em: 2026-10-20.
 
 Status: reestimativa preliminar para a arquitetura escolhida em 2026-10-09.
 Estimativa preliminar, sem medição de produtividade ou compromisso de prazo.
@@ -64,12 +64,40 @@ Esta faixa considera as seguintes premissas; demais escolhas ainda aguardam conf
 - Conexão por uma DSN em `seedCorpus.dsn`, com sobrescrita por `DOGEFUZZ_SEEDCORPUS_DSN`; reaproveitar o mecanismo atual de configuração. Timeout de consulta definido separadamente; estimativa mantida.
 - Pool configurável por instância em `seedCorpus.maxOpenConns` e `seedCorpus.maxIdleConns`, inicialmente 2/2, com sobrescrita por `DOGEFUZZ_SEEDCORPUS_MAXOPENCONNS` e `DOGEFUZZ_SEEDCORPUS_MAXIDLECONNS`. Até duas conexões totais por instância (oito para quatro instâncias); tempos de vida/ociosidade nos padrões da biblioteca. Validar por medição, comparando com 4/4 se houver espera relevante; estimativa mantida.
 - Inicialização shared com uma única tentativa de verificar acesso ao acervo: em falha, registrar o erro e encerrar com erro, sem retentativa ou fallback. Timeout configurável em `seedCorpus.startupTimeout`, inicialmente `5s`, sobrescrevível por `DOGEFUZZ_SEEDCORPUS_STARTUPTIMEOUT`. Cobre conexão, autenticação e verificação de acesso, excluindo migrações; erro antecipado encerra imediatamente. Separado dos 500 ms de publicação e do timeout de consulta.
-- Estrutura mínima de seeds, registros independentes por publicação e metadados de seleção, sem referência de origem na entrega inicial.
+- Uma única tabela de seeds aprovada em 2026-10-20, chamada `seed_candidates`: identidade, inputs, métricas, ID e horário de escrita no mesmo registro, sem tabelas separadas de contratos/funções. Registros independentes por publicação, sem referência de origem. Repetir a identidade reduz relacionamentos/cadastros coordenados; nomes/tipos dos campos SQL aprovados; índices ainda pendentes.
+- NOT NULL em todos os campos de `seed_candidates`, aprovado em 2026-10-20; ID e horário gerados pelo banco, sem defaults para métricas ou identidade. Zero/texto vazio não são NULL; validar identidade e preenchimento no fluxo. Restrição violada rejeita publicação, sem desfazer resultado local. Tipos SQL aprovados; validações de conteúdo ainda pendentes; estimativa de S05 mantida.
 - Publicação simples após commit local, sem garantia de entrega após falha ou encerramento.
+- Decisão de 2026-10-20: cancelamento imediato no encerramento. Um único componente é responsável pelo pool do acervo. Ao iniciar o encerramento, impedir novas operações, solicitar o cancelamento das consultas/publicações em andamento e fechar o pool, sem aguardar seus timeouts como política de conclusão. Não adicionar prazo de drenagem, fila ou retentativa de encerramento. Preservar os dados do PostgreSQL e o ciclo de vida atual do SQLite local. Cancelamento é uma solicitação ao driver, não garantia de retorno instantâneo nem de rollback: uma publicação pode já ter sido gravada. Aplicar a política existente de falha aceita, sem reenviar ao Geth ou garantir publicação posterior.
 - Sem outbox, recuperação persistente de publicação, replay ou histórico global de observações.
 - Consultas limitadas no comportamento compartilhado, sem candidatos locais. Timeout configurável em `seedCorpus.queryTimeout`, inicialmente `500ms`, sobrescrevível por `DOGEFUZZ_SEEDCORPUS_QUERYTIMEOUT`; cobre espera pelo pool, eventual conexão e consulta/leitura, excluindo ordenação dos orderers, desserialização e mutação. Em erro/timeout, propagar sem complemento; complemento configurado somente após sucesso insuficiente.
 - Valores reutilizados como estão, inclusive endereços; sem exclusão por dependência do ambiente ou remapeamento. Verificar os tipos já suportados.
 - Novas tabelas precisam de confirmação prévia; a mudança arquitetural não aprova seu desenho.
+
+Tipos e nomes dos campos aprovados em 2026-10-20 para `seed_candidates`.
+Todos os campos são NOT NULL; somente ID e horário são gerados pelo banco.
+
+| Campo | Tipo PostgreSQL | Conteúdo |
+| --- | --- | --- |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` | Chave primária sequencial do registro |
+| `source_hash` | `TEXT` | SHA-256 hexadecimal da fonte exata |
+| `contract_name` | `TEXT` | Declaração do contrato selecionada |
+| `function_signature` | `TEXT` | Assinatura ABI canônica completa |
+| `inputs` | `TEXT` | Argumentos na representação atual com `;` |
+| `executed_instructions` | `TEXT` | Instruções executadas na representação atual com `;` |
+| `delta_coverage` | `NUMERIC(20,0)` | Métrica uint64 de cobertura do produtor |
+| `delta_min_distance` | `NUMERIC(20,0)` | Métrica uint64 de distância do produtor |
+| `critical_instructions_hits` | `NUMERIC(20,0)` | Métrica uint64 de ocorrências críticas do produtor |
+| `written_at` | `TIMESTAMPTZ` | Horário atribuído pelo PostgreSQL na inserção |
+
+Validação técnica: MaxUint32 (4.294.967.295) cabe em BIGINT e NUMERIC(20,0),
+mas não limita todas as métricas. ComputeDeltaMinDistance retornou 8.589.934.590
+com dois alvos inalcançáveis e MaxUint64 (18.446.744.073.709.551.615) com instruções
+vazias em chamada controlada. SELECT no PostgreSQL confirmou a representação
+exata desses valores em NUMERIC(20,0). Não reduzir a faixa nem converter por
+float64 na persistência; testar o round-trip pelo driver na implementação.
+A restrição CHECK de faixa 0..MaxUint64 e demais validações de conteúdo ainda
+precisam ser aprovadas. A aprovação dos tipos não cria tabelas ou migrações.
+Referência técnica: [tipos numéricos do PostgreSQL 17](https://www.postgresql.org/docs/17/datatype-numeric.html).
 
 Decisão vigente de D05/S07 (2026-10-10): filtrar pela identidade compartilhada
 (fonte exata, declaração e assinatura ABI) e personalizar a consulta por estratégia.
@@ -82,7 +110,7 @@ Decisão vigente de D05/S07 (2026-10-10): filtrar pela identidade compartilhada
 
 O horário é atribuído pelo PostgreSQL na inserção, não pelo produtor. ID numérico
 sequencial e horário pertencem ao registro persistido, sem integrar SeedCandidate.
-Os nomes e tipos SQL precisam ser aprovados no esquema. Publicações repetidas
+Os campos `written_at` (TIMESTAMPTZ) e `id` (BIGINT identity) estão aprovados no esquema. Publicações repetidas
 recebem novos registros/horários. Horário e ID não garantem ordem de commit.
 
 A consulta greybox mantém o critério primário crescente atual, mas substitui a
@@ -233,7 +261,7 @@ Novos IDs S01–S16 evitam confundir tarefas reformuladas com as antigas.
 A ordem da tabela é uma sequência válida; predecessoras no documento 003 indicam
 onde há caminhos independentes. S01 é entrega documental concluída; S02/S03 estão
 implementadas no escopo delegado (S02 parcial), com revisão pendente;
-S04–S16 permanecem pendentes. O status e seu critério estão no documento 003. Verificação de código
+S04 está pronta para implementação; S05–S16 permanecem pendentes. O status e seu critério estão no documento 003. Verificação de código
 se aplica às tarefas de implementação; S13/S14 acrescentam integração entre ambientes.
 
 | ID | Tarefa e entrega verificável | Pontos | Horas |
@@ -241,8 +269,8 @@ se aplica às tarefas de implementação; S13/S14 acrescentam integração entre
 | S01 | **Contrato mínimo e fluxo:** Documentar fronteira local/acervo, pontos de integração e política de publicação; mapear a passagem para resultado concluído. | 5 | 4–8 |
 | S02 | **Formato e compatibilidade dos inputs:** Manter separador `;` via adapter, sem campo de versão, e preservar a propagação atual de erros de desserialização; verificar round-trip, coleções e endereços, documentando a ambiguidade quando um argumento contém `;`. | 8 | 8–14 |
 | S03 | **Identidade estável da função:** Calcular hash da fonte exata e assinatura ABI completa uma vez no cadastro; testar múltiplas declarações e sobrecargas sem substituir UUIDs locais. | 5 | 4–8 |
-| S04 | **Conexão exclusiva do acervo:** Adicionar configuração e conexão independente; PostgreSQL obrigatório também em execução local; aplicar pool configurável 2/2 e startupTimeout de 5s, aplicar queryTimeout configurável de 500ms e definir fechamento. | 5 | 6–10 |
-| S05 | **Esquema e migração do acervo:** Após confirmação das novas tabelas, criar estrutura mínima de seeds, metadados de seleção, índices e registros independentes mesmo com inputs iguais, sem referência de origem; verificar migração reaplicável. | 8 | 8–14 |
+| S04 | **Conexão exclusiva do acervo:** Adicionar configuração e conexão independente; PostgreSQL obrigatório também em execução local; aplicar pool configurável 2/2 e startupTimeout de 5s, aplicar queryTimeout configurável de 500ms e fechamento com bloqueio de novas operações e cancelamento imediato das iniciadas, sem apagar dados. | 5 | 6–10 |
+| S05 | **Esquema e migração do acervo:** Implementar a tabela única `seed_candidates` com campos/tipos aprovados, após definir validações, índices e migração; preservar metadados de seleção e registros independentes mesmo com inputs iguais, sem referência de origem; verificar migração reaplicável. Tabelas adicionais exigem confirmação própria. | 8 | 8–14 |
 | S06 | **Publicação de entradas concluídas:** Publicar após conclusão e commit local confirmado; não publicar incompletas; tolerar duplicatas e falhas conforme política escolhida, sem reenviar ao Geth. | 8 | 8–14 |
 | S07 | **Consulta de candidatos do acervo:** Consultar o acervo por chave e estratégia dentro de RequestSeeds(): greybox por DeltaCoverage crescente, escrita decrescente e ID decrescente até seedsSize; dirigidos até os 100 mais recentes pela escrita no acervo, com desempate por ID decrescente, para ordenar no Dogefuzz. Preservar complemento e validar campo temporal/desempates. | 8 | 8–14 |
 | S08 | **Integração das três greybox:** Adaptar candidatos à seleção existente de greybox, directed_greybox e other_directed_greybox; mutar e avaliar no Geth local sem adotar estado remoto. | 8 | 8–14 |

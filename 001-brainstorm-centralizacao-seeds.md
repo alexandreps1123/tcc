@@ -1,6 +1,6 @@
 # Brainstorm — persistência local e acervo compartilhado de seeds
 
-Criado em: 2026-10-06. Revisado em: 2026-10-10.
+Criado em: 2026-10-06. Revisado em: 2026-10-20.
 
 Status: decisões consolidadas; preparação S02/S03 entregue em branch separada,
 com revisão pendente. Esta revisão atualiza documentação, sem alterar código.
@@ -59,6 +59,7 @@ por um componente interno de cada Dogefuzz, sem exigir serviço HTTP adicional.
   inteira de conexão, autenticação e verificação de acesso; não inclui migrações.
   Erro recebido antes do prazo encerra imediatamente, sem aguardar os 5 segundos.
   Esse timeout é separado dos timeouts de publicação e consulta, ambos inicialmente 500 ms.
+- Decisão de 2026-10-20: cancelamento imediato no encerramento. Um único componente é responsável pelo pool do acervo. Ao iniciar o encerramento, impedir novas operações, solicitar o cancelamento das consultas/publicações em andamento e fechar o pool, sem aguardar seus timeouts como política de conclusão. Não adicionar prazo de drenagem, fila ou retentativa de encerramento. Preservar os dados do PostgreSQL e o ciclo de vida atual do SQLite local. Cancelamento é uma solicitação ao driver, não garantia de retorno instantâneo nem de rollback: uma publicação pode já ter sido gravada. Aplicar a política existente de falha aceita, sem reenviar ao Geth ou garantir publicação posterior.
 - UUIDs locais continuam identificando tarefas, contratos, funções e transações.
 - Decisão vigente de 2026-10-10: existir somente o comportamento compartilhado
   de seeds, inclusive em execução local fora do benchmark. PostgreSQL e DSN são
@@ -215,7 +216,7 @@ Decisão vigente de D05/S07 (2026-10-10): filtrar pela identidade compartilhada
 
 O horário é atribuído pelo PostgreSQL na inserção, não pelo produtor. ID numérico
 sequencial e horário pertencem ao registro persistido, sem integrar SeedCandidate.
-Os nomes e tipos SQL precisam ser aprovados no esquema. Publicações repetidas
+Os campos `written_at` (TIMESTAMPTZ) e `id` (BIGINT identity) estão aprovados no esquema. Publicações repetidas
 recebem novos registros/horários. Horário e ID não garantem ordem de commit.
 
 A consulta greybox mantém o critério primário crescente atual, mas substitui a
@@ -336,11 +337,47 @@ Além do `;`, o mapper atual perde uma string vazia isolada; o agente reproduziu
 ambos os limites sem alterar o comportamento. Não afirmar round-trip universal.
 Critérios de recuperação estão definidos; esquema e integração seguem pendentes.
 
-Proposta para decisão em D03: uma estrutura de seeds com chave da função,
-inputs com separador `;` e metadados necessários à seleção. Cada registro terá ID próprio,
-sem unicidade por combinação de função e argumentos.
-Nome e criação das novas tabelas exigem confirmação
-prévia do usuário; não criar automaticamente corpora, observations ou outbox.
+Decisão de 2026-10-20 em D03: uma única tabela de seeds. Cada publicação armazena
+a identidade compartilhada da função, inputs com separador `;`, métricas do
+SeedCandidate, ID sequencial próprio e horário de escrita. Não impor unicidade
+por função/argumentos. Os dados da identidade se repetem por registro para evitar
+relacionamentos e cadastros coordenados de contratos/funções entre instâncias.
+Nome aprovado em 2026-10-20: `seed_candidates`, alinhado ao objeto SeedCandidate.
+Obrigatoriedade aprovada em 2026-10-20: todos os campos NOT NULL, com ID e horário
+gerados pelo banco, sem defaults para métricas ou identidade. Zero e texto vazio
+continuam permitidos por NOT NULL; identidade válida e métricas efetivamente
+calculadas exigem validação no fluxo. Violação rejeita a publicação, preservando
+o resultado local conforme política vigente. Validações de conteúdo, índices e
+migração ainda precisam ser definidos.
+
+Tipos e nomes dos campos aprovados em 2026-10-20 para `seed_candidates`.
+Todos os campos são NOT NULL; somente ID e horário são gerados pelo banco.
+
+| Campo | Tipo PostgreSQL | Conteúdo |
+| --- | --- | --- |
+| `id` | `BIGINT GENERATED ALWAYS AS IDENTITY` | Chave primária sequencial do registro |
+| `source_hash` | `TEXT` | SHA-256 hexadecimal da fonte exata |
+| `contract_name` | `TEXT` | Declaração do contrato selecionada |
+| `function_signature` | `TEXT` | Assinatura ABI canônica completa |
+| `inputs` | `TEXT` | Argumentos na representação atual com `;` |
+| `executed_instructions` | `TEXT` | Instruções executadas na representação atual com `;` |
+| `delta_coverage` | `NUMERIC(20,0)` | Métrica uint64 de cobertura do produtor |
+| `delta_min_distance` | `NUMERIC(20,0)` | Métrica uint64 de distância do produtor |
+| `critical_instructions_hits` | `NUMERIC(20,0)` | Métrica uint64 de ocorrências críticas do produtor |
+| `written_at` | `TIMESTAMPTZ` | Horário atribuído pelo PostgreSQL na inserção |
+
+Validação técnica: MaxUint32 (4.294.967.295) cabe em BIGINT e NUMERIC(20,0),
+mas não limita todas as métricas. ComputeDeltaMinDistance retornou 8.589.934.590
+com dois alvos inalcançáveis e MaxUint64 (18.446.744.073.709.551.615) com instruções
+vazias em chamada controlada. SELECT no PostgreSQL confirmou a representação
+exata desses valores em NUMERIC(20,0). Não reduzir a faixa nem converter por
+float64 na persistência; testar o round-trip pelo driver na implementação.
+A restrição CHECK de faixa 0..MaxUint64 e demais validações de conteúdo ainda
+precisam ser aprovadas. A aprovação dos tipos não cria tabelas ou migrações.
+Referência técnica: [tipos numéricos do PostgreSQL 17](https://www.postgresql.org/docs/17/datatype-numeric.html).
+
+Tabelas adicionais exigem confirmação prévia; não criar automaticamente tabelas
+de contratos, funções, corpora, observations, outbox ou controle de migração.
 
 Se a opção futura de origem for adotada, ela será uma referência, não uma chave
 estrangeira para SQLite remoto. O histórico local pode desaparecer ao remover seu container. Se algum
@@ -438,16 +475,17 @@ independentes presumidas. Teste funcional curto não substitui campanha científ
 S01 está concluída documentalmente. S02 foi implementada parcialmente e S03 foi
 implementada no escopo delegado; ambas aguardam revisão. Testes constam do relatório
 do agente, sem execução blockchain real. Banco/acervo e integração ainda pendentes.
-Próximas decisões: fechamento da conexão, migração, esquema e acesso dos containers.
+S04 está pronta para implementação com cancelamento imediato no encerramento.
+Próximas decisões: esquema, migração e acesso dos containers.
 O critério do status está no [acompanhamento](003-acompanhamento-centralizacao-seeds.md).
 
 | Definição | Pendências vigentes |
 | --- | --- |
-| D02 | PostgreSQL 17, DSN, pool configurável 2/2, falha imediata e startupTimeout configurável de 5s confirmados; queryTimeout configurável de 500ms confirmado; configuração do servidor, migração e acesso dos containers pendentes; fixar versão de correção/imagem na infraestrutura |
-| D03 | Aprovar novas tabelas, campos de armazenamento, índices e limites; detalhar repetições se tentativas acima de 1 |
+| D02 | PostgreSQL 17, DSN, pool configurável 2/2, falha imediata e startupTimeout configurável de 5s confirmados; queryTimeout configurável de 500ms confirmado; cancelamento imediato no encerramento definido; configuração do servidor, migração e acesso dos containers pendentes; fixar versão de correção/imagem na infraestrutura |
+| D03 | Tabela única `seed_candidates` e NOT NULL em todos os campos aprovados; ID/horário gerados pelo banco e métricas/identidade sem defaults; campos/tipos SQL aprovados; definir validações, índices e limites; detalhar repetições se tentativas acima de 1 |
 | D04 | Definições de formato/erros fechadas; revisão da preparação entregue e validação no acervo pendentes. Limites de `;` e string vazia isolada registrados |
 | D05 | Recuperação, limites e desempates definidos; cache de identidade em memória entregue, com revisão pendente. Falta definir métodos especiais/auxiliares e filtros adicionais de cenário e validar integração dirigida; campos SQL dependem de D03 |
-| D06 | Somente comportamento compartilhado, inclusive local, sem parâmetro de modo; infraestrutura, encerramento e protocolo do baseline histórico pendentes |
+| D06 | Somente comportamento compartilhado, inclusive local, sem parâmetro de modo; cancelamento imediato no encerramento definido; infraestrutura e protocolo do baseline histórico pendentes |
 | D07 | Métricas, protocolo anterior, orçamento e condição inicial do corpus |
 | D08 | Impacto das dívidas atuais na integração e no comparativo |
 

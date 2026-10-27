@@ -1,0 +1,38 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Dogefuzz: preparar configuração local",
+      "type": "process",
+      "command": "python3",
+      "args": ["scripts/local.py", "prepare"],
+      "options": {"cwd": "${workspaceFolder}/dogefuzz"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Dogefuzz: subir dependências locais",
+      "type": "process",
+      "command": "make",
+      "args": ["local.up"],
+      "options": {"cwd": "${workspaceFolder}/dogefuzz"},
+      "problemMatcher": []
+    },
+    {
+      "label": "Dogefuzz: testes S02/S03",
+      "type": "process",
+      "command": "make",
+      "args": ["local.test"],
+      "options": {"cwd": "${workspaceFolder}/dogefuzz"},
+      "group": {"kind": "test", "isDefault": true},
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "Dogefuzz: chamada SimpleDAO greybox 60s",
+      "type": "process",
+      "command": "make",
+      "args": ["local.smoke"],
+      "options": {"cwd": "${workspaceFolder}/dogefuzz"},
+      "problemMatcher": []
+    }
+  ]
+}
